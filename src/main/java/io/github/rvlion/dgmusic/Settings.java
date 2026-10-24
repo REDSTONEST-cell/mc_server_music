@@ -34,13 +34,10 @@ public record Settings(
         boolean playOnJoin
 ) {
 
-    public static Settings load(FileConfiguration c, String serverIp) {
-        int port = c.getInt("http.port", 8765);
+    public static Settings load(FileConfiguration c) {
+        int port = c.getInt("http.port", 28765);
+        // 留空表示按玩家进服时使用的地址自动生成
         String publicUrl = c.getString("http.public-url", "").trim();
-        if (publicUrl.isEmpty()) {
-            String host = serverIp == null || serverIp.isBlank() ? "127.0.0.1" : serverIp;
-            publicUrl = "http://" + host + ":" + port;
-        }
         while (publicUrl.endsWith("/")) {
             publicUrl = publicUrl.substring(0, publicUrl.length() - 1);
         }

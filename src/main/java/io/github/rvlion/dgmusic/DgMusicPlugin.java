@@ -25,6 +25,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -49,7 +50,7 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
             getLogger().severe("config.yml 格式错误，已使用默认配置: " + configError);
             getLogger().severe("提示：Windows 路径请用正斜杠（C:/ffmpeg/bin/ffmpeg.exe）或改用单引号包住");
         }
-        settings = Settings.load(getConfig(), Bukkit.getIp());
+        settings = Settings.load(getConfig());
 
         AtomicInteger counter = new AtomicInteger();
         prepareExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -106,7 +107,7 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
         }
         Settings old = settings;
         reloadConfig();
-        settings = Settings.load(getConfig(), Bukkit.getIp());
+        settings = Settings.load(getConfig());
         if (!old.httpBind().equals(settings.httpBind()) || old.httpPort() != settings.httpPort()) {
             if (httpServer != null) httpServer.stop();
             startHttpServer();
@@ -130,8 +131,9 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
         try {
             httpServer = new PackHttpServer(settings.httpBind(), settings.httpPort(), preparer.packDir());
             httpServer.start();
-            getLogger().info("资源包 HTTP 服务已启动: " + settings.httpBind() + ":" + settings.httpPort()
-                    + "，玩家下载地址: " + settings.publicUrl() + "（用其他网络的浏览器打开，显示 DgMusic OK 即为可访问）");
+            getLogger().info("资源包 HTTP 服务已启动: " + settings.httpBind() + ":" + settings.httpPort() + "，玩家下载地址: "
+                    + (settings.publicUrl().isEmpty() ? "http://<玩家进服地址>:" + settings.httpPort() : settings.publicUrl())
+                    + "（用其他网络的浏览器打开，显示 DgMusic OK 即为可访问）");
         } catch (IOException e) {
             httpServer = null;
             getLogger().log(Level.SEVERE, "无法启动资源包 HTTP 服务（端口 " + settings.httpPort() + " 被占用？），点歌将无法播放", e);
@@ -147,9 +149,9 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
             getLogger().warning(cookieStatus + "，只能搜索，无法播放。请在 " + getDataFolder().toPath().resolve("config.yml")
                     + " 中填写 QQ 音乐 Cookie 后执行 /dgmusic reload");
         }
-        if (getConfig().getString("http.public-url", "").isBlank()) {
-            getLogger().warning("未配置 http.public-url，玩家将无法下载音乐资源包（当前地址 " + s.publicUrl()
-                    + " 只有服务器本机能访问）。请填写公网 IP 或域名，例如 http://123.45.67.89:8765");
+        if (s.publicUrl().contains("://0.0.0.0") || s.publicUrl().contains("://127.0.0.1")
+                || s.publicUrl().contains("://localhost")) {
+            getLogger().warning("http.public-url = " + s.publicUrl() + " 是本机地址，玩家无法访问。请改为公网 IP 或域名，或留空自动使用玩家进服地址");
         }
         Bukkit.getAsyncScheduler().runNow(this, t -> {
             try {
@@ -198,6 +200,24 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
 
     public MusicPlayer player() {
         return player;
+    }
+
+    /**
+     * 玩家下载资源包的地址。未配置 http.public-url 时使用玩家进服时填写的地址 + HTTP 端口。
+     */
+    public String packUrl(Player player, String id) {
+        String base = settings.publicUrl();
+        if (base.isEmpty()) {
+            String host = null;
+            InetSocketAddress virtualHost = player.getVirtualHost();
+            if (virtualHost != null) host = virtualHost.getHostString();
+            if (host == null || host.isBlank()) host = Bukkit.getIp();
+            if (host == null || host.isBlank()) host = "127.0.0.1";
+            if (host.endsWith(".")) host = host.substring(0, host.length() - 1);
+            if (host.contains(":") && !host.startsWith("[")) host = "[" + host + "]";
+            base = "http://" + host + ":" + settings.httpPort();
+        }
+        return base + "/packs/" + id + ".zip";
     }
 
     public Component prefixed(Component message) {

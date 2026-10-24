@@ -10,9 +10,8 @@ import java.util.UUID;
  *
  * @param id       资源包文件名与声音事件名所用的短 id
  * @param packId   资源包 UUID
- * @param url      玩家客户端下载资源包的地址
  * @param sha1     资源包 SHA-1
  * @param soundKey 资源包中的声音事件
  */
-public record PreparedTrack(Song song, String id, UUID packId, String url, String sha1, Key soundKey) {
+public record PreparedTrack(Song song, String id, UUID packId, String sha1, Key soundKey) {
 }

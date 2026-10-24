@@ -273,19 +273,20 @@ public final class MusicPlayer {
             }
             if (old != null) player.removeResourcePacks(old);
 
-            ResourcePackInfo info = ResourcePackInfo.resourcePackInfo(track.packId(), URI.create(track.url()), track.sha1());
+            String url = plugin.packUrl(player, track.id());
+            ResourcePackInfo info = ResourcePackInfo.resourcePackInfo(track.packId(), URI.create(url), track.sha1());
             String prompt = plugin.settings().packPrompt();
             ResourcePackRequest.Builder request = ResourcePackRequest.resourcePackRequest()
                     .packs(info)
                     .required(false)
                     .replace(false)
-                    .callback((id, status, audience) -> onPackStatus(player, track, g, status));
+                    .callback((id, status, audience) -> onPackStatus(player, track, g, status, url));
             if (!prompt.isBlank()) request.prompt(MiniMessage.miniMessage().deserialize(prompt));
             player.sendResourcePacks(request.build());
         }, null);
     }
 
-    private void onPackStatus(Player player, PreparedTrack track, long g, ResourcePackStatus status) {
+    private void onPackStatus(Player player, PreparedTrack track, long g, ResourcePackStatus status, String url) {
         switch (status) {
             case SUCCESSFULLY_LOADED -> playIfCurrent(player, track, g);
             case DECLINED -> {
@@ -296,7 +297,7 @@ public final class MusicPlayer {
             case INVALID_URL, FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
                 sentPacks.remove(player.getUniqueId(), track.packId());
                 plugin.getLogger().warning(player.getName() + " 加载音乐资源包失败: " + status
-                        + "（请检查 http.public-url 是否能被玩家访问: " + track.url() + "）");
+                        + "（玩家下载地址: " + url + "，请确认该地址能从外网访问，必要时在 http.public-url 中手动指定）");
                 plugin.message(player, Component.text("音乐资源包加载失败（" + status + "）", NamedTextColor.RED));
             }
             default -> {

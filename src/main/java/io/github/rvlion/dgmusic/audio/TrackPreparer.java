@@ -118,8 +118,7 @@ public final class TrackPreparer {
 
         String sha1 = sha1Hex(zip);
         UUID packId = UUID.nameUUIDFromBytes((NAMESPACE + ":" + id).getBytes(StandardCharsets.UTF_8));
-        String url = s.publicUrl() + "/packs/" + id + ".zip";
-        return new PreparedTrack(song, id, packId, url, sha1, Key.key(NAMESPACE, "music." + id));
+        return new PreparedTrack(song, id, packId, sha1, Key.key(NAMESPACE, "music." + id));
     }
 
     private void download(String url, Path target, Settings s) throws IOException, QQMusicException {

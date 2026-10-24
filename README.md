@@ -30,8 +30,9 @@ Minecraft 全服点歌插件，曲库来自 QQ 音乐。玩家搜歌、点歌后
 2. 将 `DgMusic-x.x.x.jar` 放入 `plugins` 目录，启动一次服务器生成配置文件。
 3. 编辑 `plugins/DgMusic/config.yml`：
    - `qq.cookie`：填写 QQ 音乐 Cookie（见下文）；
-   - `http.public-url`：填写**玩家能访问到**的地址，例如 `http://123.45.67.89:8765`；
-   - 在防火墙/安全组中放行 `http.port`（默认 8765，TCP）。
+   - 在防火墙/云服务器安全组中放行 `http.port`（默认 28765，TCP）；
+   - `http.public-url` 一般留空即可：插件会自动使用「玩家进服时输入的地址 + `http.port`」作为下载地址。使用内网穿透时，需要把 `http.port` 也穿透出去，并在这里填写穿透后的地址（不能填 `0.0.0.0` 或 `127.0.0.1`）。
+   - 用其他网络的浏览器访问 `http://服务器地址:28765/`，显示 `DgMusic OK` 即说明端口可以从外网访问。
 4. 执行 `/dgmusic reload` 或重启服务器。
 
 ### 获取 QQ 音乐 Cookie
