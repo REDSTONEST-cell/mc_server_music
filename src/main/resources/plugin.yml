@@ -23,9 +23,17 @@ commands:
     description: 停止所有歌曲播放并清空队列
     usage: /dgstop
     permission: dgmusic.stop
+  dgdont:
+    description: 拒绝听歌，不再推送音乐资源包
+    usage: /dgdont
+    permission: dgmusic.mute
+  dgon:
+    description: 重新开启听歌
+    usage: /dgon
+    permission: dgmusic.mute
   dgmusic:
     description: 点歌插件
-    usage: /dgmusic <list|mute|reload>
+    usage: /dgmusic <list|reload>
     permission: dgmusic.use
 
 permissions:

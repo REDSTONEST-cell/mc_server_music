@@ -17,7 +17,7 @@ Minecraft 全服点歌插件，曲库来自 QQ 音乐。玩家搜歌、点歌后
 
 由此带来的限制：
 
-- 玩家需要**接受服务器资源包**，每次切歌客户端都会重新加载一次资源（屏幕会短暂卡顿 1~3 秒）；
+- 玩家需要**接受服务器资源包**，播放一首新歌时客户端会重新加载一次资源（短暂出现加载画面）。停歌、拒绝听歌不会触发加载；最近播放过的歌（默认 5 首，`resource-pack.max-loaded`）再次播放时也无需重新加载。不想被打扰的玩家可以输入 `/dgdont`；
 - 中途进服的玩家会从头开始播放当前歌曲（可在配置中关闭）；
 - 每位玩家各自在资源包加载完成时开始播放，相互之间会有几秒误差。
 
@@ -56,7 +56,8 @@ Cookie 中至少需要包含 `uin`（微信登录为 `wxuin`）与 `qqmusic_key`
 | `/dgqg` | 切歌，跳过当前歌曲 | `dgmusic.skip` | 所有人 |
 | `/dgstop` | 停止所有播放并清空队列 | `dgmusic.stop` | OP |
 | `/dgmusic list` | 查看点歌队列 | `dgmusic.list` | 所有人 |
-| `/dgmusic mute` | 开关自己的点歌播放 | `dgmusic.mute` | 所有人 |
+| `/dgdont` | 拒绝听歌：不再推送音乐资源包、不播放点歌（重进服务器后依然有效） | `dgmusic.mute` | 所有人 |
+| `/dgon` | 重新开启听歌 | `dgmusic.mute` | 所有人 |
 | `/dgmusic reload` | 重载配置 | `dgmusic.reload` | OP |
 
 `dgmusic.bypass`（默认 OP）：无视搜索冷却和个人排队数量上限。

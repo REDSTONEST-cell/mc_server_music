@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * /dgmusic list | mute | reload
+ * /dgmusic list | reload，/dgdont 拒绝听歌，/dgon 重新开启
  */
 public final class MusicCommand implements TabExecutor {
 
@@ -29,21 +29,14 @@ public final class MusicCommand implements TabExecutor {
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
+        if (command.getName().equalsIgnoreCase("dgdont") || command.getName().equalsIgnoreCase("dgon")) {
+            setListening(sender, command.getName().equalsIgnoreCase("dgon"));
+            return true;
+        }
         String sub = args.length == 0 ? "help" : args[0].toLowerCase(Locale.ROOT);
         switch (sub) {
             case "list" -> {
                 if (check(sender, "dgmusic.list")) list(sender);
-            }
-            case "mute" -> {
-                if (!check(sender, "dgmusic.mute")) return true;
-                if (!(sender instanceof Player player)) {
-                    sender.sendMessage(plugin.prefixed(Component.text("只有玩家可以使用", NamedTextColor.RED)));
-                    return true;
-                }
-                boolean muted = plugin.player().toggleMute(player);
-                plugin.message(player, muted
-                        ? Component.text("已关闭点歌播放，再次输入 /dgmusic mute 重新开启", NamedTextColor.YELLOW)
-                        : Component.text("已开启点歌播放", NamedTextColor.GREEN));
             }
             case "reload" -> {
                 if (!check(sender, "dgmusic.reload")) return true;
@@ -60,6 +53,23 @@ public final class MusicCommand implements TabExecutor {
             default -> help(sender);
         }
         return true;
+    }
+
+    private void setListening(CommandSender sender, boolean listening) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage(plugin.prefixed(Component.text("只有玩家可以使用", NamedTextColor.RED)));
+            return;
+        }
+        boolean changed = plugin.player().setListening(player, listening);
+        if (listening) {
+            plugin.message(player, changed
+                    ? Component.text("已开启点歌收听，之后会收到全服点歌", NamedTextColor.GREEN)
+                    : Component.text("你已经在收听点歌了", NamedTextColor.YELLOW));
+        } else {
+            plugin.message(player, changed
+                    ? Component.text("已拒绝听歌：不会再推送音乐资源包，也不会播放点歌。输入 /dgon 可重新开启", NamedTextColor.YELLOW)
+                    : Component.text("你已经拒绝听歌了，输入 /dgon 可重新开启", NamedTextColor.YELLOW));
+        }
     }
 
     private boolean check(CommandSender sender, String permission) {
@@ -101,7 +111,8 @@ public final class MusicCommand implements TabExecutor {
                 .append(Component.newline()).append(Component.text("/dgxz <序号>  点播搜索结果中的歌曲", NamedTextColor.GRAY))
                 .append(Component.newline()).append(Component.text("/dgqg  切歌", NamedTextColor.GRAY))
                 .append(Component.newline()).append(Component.text("/dgmusic list  查看点歌队列", NamedTextColor.GRAY))
-                .append(Component.newline()).append(Component.text("/dgmusic mute  开关自己的点歌播放", NamedTextColor.GRAY))
+                .append(Component.newline()).append(Component.text("/dgdont  拒绝听歌（不再推送资源包）", NamedTextColor.GRAY))
+                .append(Component.newline()).append(Component.text("/dgon  重新开启听歌", NamedTextColor.GRAY))
                 .append(Component.newline()).append(Component.text("/dgstop  停止所有播放（管理员）", NamedTextColor.GRAY))
                 .append(Component.newline()).append(Component.text("/dgmusic reload  重载配置（管理员）", NamedTextColor.GRAY))
                 .build();
@@ -117,7 +128,8 @@ public final class MusicCommand implements TabExecutor {
                                       @NotNull String alias, @NotNull String[] args) {
         if (args.length != 1) return List.of();
         String prefix = args[0].toLowerCase(Locale.ROOT);
-        return List.of("list", "mute", "reload").stream()
+        if (!command.getName().equalsIgnoreCase("dgmusic")) return List.of();
+        return List.of("list", "reload").stream()
                 .filter(s -> s.startsWith(prefix))
                 .filter(s -> !s.equals("reload") || sender.hasPermission("dgmusic.reload"))
                 .toList();

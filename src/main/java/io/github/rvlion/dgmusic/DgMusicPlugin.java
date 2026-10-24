@@ -67,7 +67,7 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
             Bukkit.getPluginManager().disablePlugin(this);
             return;
         }
-        player = new MusicPlayer(this, preparer);
+        player = new MusicPlayer(this, preparer, getDataFolder().toPath());
         startHttpServer();
 
         searchCommands = new SearchCommands(this);
@@ -76,7 +76,10 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
         register("dgxz", searchCommands);
         register("dgqg", adminCommands);
         register("dgstop", adminCommands);
-        register("dgmusic", new MusicCommand(this));
+        MusicCommand musicCommand = new MusicCommand(this);
+        register("dgmusic", musicCommand);
+        register("dgdont", musicCommand);
+        register("dgon", musicCommand);
         Bukkit.getPluginManager().registerEvents(this, this);
 
         checkEnvironment();

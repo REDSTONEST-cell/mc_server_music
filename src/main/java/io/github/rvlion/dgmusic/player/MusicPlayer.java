@@ -18,7 +18,11 @@ import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.entity.Player;
 
+import java.io.IOException;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -32,6 +36,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.logging.Level;
 
 /**
  * 全服播放队列。所有状态变更都在 this 上同步；对玩家的操作通过玩家自己的调度器执行，兼容 Folia。
@@ -59,11 +64,18 @@ public final class MusicPlayer {
     private volatile long generation;
     private ScheduledTask endTask;
 
+    /** 用 /dgdont 拒绝听歌的玩家，保存在 muted.txt，/dgon 后恢复 */
     private final Set<UUID> muted = ConcurrentHashMap.newKeySet();
-    /** 每个玩家当前持有的本插件资源包 */
-    private final Map<UUID, UUID> sentPacks = new ConcurrentHashMap<>();
+    private final Path mutedFile;
+    /**
+     * 每个玩家已加载的本插件资源包，按加载先后排列。
+     * 客户端每次增删资源包都会重新加载资源（出现加载画面），所以这里只增不减，超出上限时随新歌一起卸载最旧的。
+     */
+    private final Map<UUID, Deque<UUID>> loadedPacks = new ConcurrentHashMap<>();
 
-    public MusicPlayer(DgMusicPlugin plugin, TrackPreparer preparer) {
+    public MusicPlayer(DgMusicPlugin plugin, TrackPreparer preparer, Path dataDir) {
+        this.mutedFile = dataDir.resolve("muted.txt");
+        loadMuted(plugin);
         this.plugin = plugin;
         this.preparer = preparer;
     }
@@ -128,30 +140,62 @@ public final class MusicPlayer {
         return ids;
     }
 
-    /** 切换个人静音，返回切换后是否为静音状态。 */
-    public boolean toggleMute(Player player) {
+    public boolean isListening(Player player) {
+        return !muted.contains(player.getUniqueId());
+    }
+
+    /**
+     * 开启或关闭某个玩家的点歌收听，返回状态是否有变化。
+     * 关闭时只停止声音，不卸载已加载的资源包，避免客户端出现加载画面。
+     */
+    public boolean setListening(Player player, boolean listening) {
         UUID uuid = player.getUniqueId();
-        if (muted.remove(uuid)) {
-            PreparedTrack track;
-            long g;
-            synchronized (this) {
-                track = currentTrack;
-                g = generation;
-            }
-            if (track != null) sendTrack(player, track, g);
-            return false;
-        }
-        muted.add(uuid);
+        boolean changed = listening ? muted.remove(uuid) : muted.add(uuid);
+        if (!changed) return false;
+        saveMuted();
+
         PreparedTrack track;
+        long g;
         synchronized (this) {
             track = currentTrack;
+            g = generation;
         }
-        UUID pack = sentPacks.remove(uuid);
-        player.getScheduler().run(plugin, t -> {
-            if (track != null) player.stopSound(SoundStop.named(track.soundKey()));
-            if (pack != null) player.removeResourcePacks(pack);
-        }, null);
+        if (track != null) {
+            if (listening) {
+                sendTrack(player, track, g);
+            } else {
+                player.getScheduler().run(plugin, t -> player.stopSound(SoundStop.named(track.soundKey())), null);
+            }
+        }
         return true;
+    }
+
+    private void loadMuted(DgMusicPlugin plugin) {
+        if (!Files.isRegularFile(mutedFile)) return;
+        try {
+            for (String line : Files.readAllLines(mutedFile, StandardCharsets.UTF_8)) {
+                try {
+                    if (!line.isBlank()) muted.add(UUID.fromString(line.trim()));
+                } catch (IllegalArgumentException ignored) {
+                    // 跳过无法识别的行
+                }
+            }
+        } catch (IOException e) {
+            plugin.getLogger().log(Level.WARNING, "读取 muted.txt 失败", e);
+        }
+    }
+
+    private void saveMuted() {
+        List<String> lines = muted.stream().map(UUID::toString).sorted().toList();
+        Bukkit.getAsyncScheduler().runNow(plugin, t -> {
+            synchronized (mutedFile) {
+                try {
+                    Files.write(mutedFile, lines, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    plugin.getLogger().log(Level.WARNING, "保存 muted.txt 失败", e);
+                }
+            }
+        });
     }
 
     public void handleJoin(Player player) {
@@ -166,7 +210,8 @@ public final class MusicPlayer {
     }
 
     public void handleQuit(Player player) {
-        sentPacks.remove(player.getUniqueId());
+        // 断开连接时客户端会自动卸载服务器资源包
+        loadedPacks.remove(player.getUniqueId());
     }
 
     public synchronized void shutdown() {
@@ -176,16 +221,16 @@ public final class MusicPlayer {
         current = null;
         PreparedTrack track = currentTrack;
         currentTrack = null;
-        for (Player p : Bukkit.getOnlinePlayers()) {
-            try {
-                if (track != null) p.stopSound(SoundStop.named(track.soundKey()));
-                UUID pack = sentPacks.get(p.getUniqueId());
-                if (pack != null) p.removeResourcePacks(pack);
-            } catch (Throwable ignored) {
-                // 关服过程中可能无法再操作玩家
+        if (track != null) {
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                try {
+                    p.stopSound(SoundStop.named(track.soundKey()));
+                } catch (Throwable ignored) {
+                    // 关服过程中可能无法再操作玩家
+                }
             }
         }
-        sentPacks.clear();
+        loadedPacks.clear();
     }
 
     // ---- 内部状态机，调用方须持有锁 ----
@@ -210,7 +255,6 @@ public final class MusicPlayer {
 
         Entry next = queue.pollFirst();
         if (next == null) {
-            removePacksForAll();
             return;
         }
         current = next;
@@ -265,13 +309,21 @@ public final class MusicPlayer {
 
     private void sendTrack(Player player, PreparedTrack track, long g) {
         player.getScheduler().run(plugin, t -> {
-            UUID old = sentPacks.put(player.getUniqueId(), track.packId());
-            if (track.packId().equals(old)) {
-                // 玩家已经加载过这个资源包（例如同一首歌再次点播）
-                playIfCurrent(player, track, g);
-                return;
+            Deque<UUID> loaded = loadedPacks.computeIfAbsent(player.getUniqueId(), k -> new ArrayDeque<>());
+            List<UUID> evict = new ArrayList<>();
+            synchronized (loaded) {
+                if (loaded.contains(track.packId())) {
+                    // 最近加载过这首歌，直接播放，客户端不需要重新加载
+                    loaded.remove(track.packId());
+                    loaded.addLast(track.packId());
+                    playIfCurrent(player, track, g);
+                    return;
+                }
+                int max = plugin.settings().maxLoadedPacks();
+                while (loaded.size() >= max) evict.add(loaded.pollFirst());
             }
-            if (old != null) player.removeResourcePacks(old);
+            // 和新资源包同时发送，客户端只会重新加载一次
+            for (UUID old : evict) player.removeResourcePacks(old);
 
             String url = plugin.packUrl(player, track.id());
             ResourcePackInfo info = ResourcePackInfo.resourcePackInfo(track.packId(), URI.create(url), track.sha1());
@@ -288,14 +340,19 @@ public final class MusicPlayer {
 
     private void onPackStatus(Player player, PreparedTrack track, long g, ResourcePackStatus status, String url) {
         switch (status) {
-            case SUCCESSFULLY_LOADED -> playIfCurrent(player, track, g);
+            case SUCCESSFULLY_LOADED -> {
+                Deque<UUID> loaded = loadedPacks.computeIfAbsent(player.getUniqueId(), k -> new ArrayDeque<>());
+                synchronized (loaded) {
+                    loaded.remove(track.packId());
+                    loaded.addLast(track.packId());
+                }
+                playIfCurrent(player, track, g);
+            }
             case DECLINED -> {
-                sentPacks.remove(player.getUniqueId(), track.packId());
                 plugin.message(player, Component.text(
-                        "你拒绝了音乐资源包，将听不到全服点歌。如不想再收到推送，可使用 /dgmusic mute", NamedTextColor.YELLOW));
+                        "你拒绝了音乐资源包，将听不到全服点歌。如不想再收到推送，可输入 /dgdont", NamedTextColor.YELLOW));
             }
             case INVALID_URL, FAILED_DOWNLOAD, FAILED_RELOAD, DISCARDED -> {
-                sentPacks.remove(player.getUniqueId(), track.packId());
                 plugin.getLogger().warning(player.getName() + " 加载音乐资源包失败: " + status
                         + "（玩家下载地址: " + url + "，请确认该地址能从外网访问，必要时在 http.public-url 中手动指定）");
                 plugin.message(player, Component.text("音乐资源包加载失败（" + status + "）", NamedTextColor.RED));
@@ -316,17 +373,6 @@ public final class MusicPlayer {
         SoundStop stop = SoundStop.named(key);
         for (Player p : Bukkit.getOnlinePlayers()) {
             p.getScheduler().run(plugin, t -> p.stopSound(stop), null);
-        }
-    }
-
-    private void removePacksForAll() {
-        for (Map.Entry<UUID, UUID> e : new ArrayList<>(sentPacks.entrySet())) {
-            Player p = Bukkit.getPlayer(e.getKey());
-            sentPacks.remove(e.getKey(), e.getValue());
-            if (p != null) {
-                UUID pack = e.getValue();
-                p.getScheduler().run(plugin, t -> p.removeResourcePacks(pack), null);
-            }
         }
     }
 }
