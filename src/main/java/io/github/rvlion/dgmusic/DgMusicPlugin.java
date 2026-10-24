@@ -112,8 +112,12 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
 
     private void checkEnvironment() {
         Settings s = settings;
-        if (s.qqCookie().isEmpty()) {
-            getLogger().warning("未配置 qq.cookie，只能搜索，无法播放。请在 config.yml 中填写 QQ 音乐 Cookie 后执行 /dgmusic reload");
+        String cookieStatus = QQMusicClient.describeCookie(s.qqCookie());
+        if (cookieStatus.startsWith("已识别")) {
+            getLogger().info("QQ 音乐 Cookie: " + cookieStatus);
+        } else {
+            getLogger().warning(cookieStatus + "，只能搜索，无法播放。请在 " + getDataFolder().toPath().resolve("config.yml")
+                    + " 中填写 QQ 音乐 Cookie 后执行 /dgmusic reload");
         }
         if (getConfig().getString("http.public-url", "").isBlank()) {
             getLogger().warning("未配置 http.public-url，玩家可能无法下载音乐资源包。当前使用: " + s.publicUrl());

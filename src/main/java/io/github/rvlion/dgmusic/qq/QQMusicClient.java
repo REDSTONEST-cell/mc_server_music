@@ -157,8 +157,9 @@ public final class QQMusicClient {
     public PlayUrl resolvePlayUrl(Song song, List<String> qualities, String cookie, int timeoutSeconds)
             throws QQMusicException {
         Credential cred = Credential.parse(cookie);
-        if (!cred.loggedIn()) {
-            throw new QQMusicException("未配置 QQ 音乐 Cookie，无法获取播放链接，请联系管理员");
+        String problem = cred.problem();
+        if (problem != null) {
+            throw new QQMusicException(problem + "，无法获取播放链接，请联系管理员");
         }
 
         List<String> fileNames = new ArrayList<>();
@@ -406,6 +407,17 @@ public final class QQMusicClient {
     public record PlayUrl(String url, String extension) {
     }
 
+    /** 用于日志的 Cookie 识别结果，不包含任何票据内容。 */
+    public static String describeCookie(String cookie) {
+        Credential cred = Credential.parse(cookie);
+        String problem = cred.problem();
+        if (problem != null) return problem;
+        String masked = cred.uin().length() > 4
+                ? "*".repeat(cred.uin().length() - 4) + cred.uin().substring(cred.uin().length() - 4)
+                : cred.uin();
+        return "已识别账号 " + masked + "（" + (cred.loginType().equals("1") ? "微信" : "QQ") + "登录）";
+    }
+
     /**
      * 从网页版 Cookie 中解析出的登录信息。
      */
@@ -414,7 +426,15 @@ public final class QQMusicClient {
         static final Credential ANONYMOUS = new Credential("0", "", "2", "");
 
         boolean loggedIn() {
-            return !uin.equals("0") && !key.isEmpty();
+            return problem() == null;
+        }
+
+        /** Cookie 不可用的原因，可用时返回 null */
+        String problem() {
+            if (rawCookie.isEmpty()) return "未配置 qq.cookie";
+            if (uin.equals("0")) return "qq.cookie 中缺少 uin（微信登录为 wxuin）";
+            if (key.isEmpty()) return "qq.cookie 中缺少 qqmusic_key 或 qm_keyst，可能复制不完整";
+            return null;
         }
 
         long gtk() {
@@ -427,6 +447,13 @@ public final class QQMusicClient {
 
         static Credential parse(String cookie) {
             if (cookie == null) cookie = "";
+            // 兼容整行复制「Cookie: xxx」或带引号、换行的情况
+            cookie = cookie.replace("\r", "").replace("\n", "").trim();
+            if (cookie.regionMatches(true, 0, "cookie:", 0, 7)) cookie = cookie.substring(7).trim();
+            if (cookie.length() >= 2 && (cookie.startsWith("\"") && cookie.endsWith("\"")
+                    || cookie.startsWith("'") && cookie.endsWith("'"))) {
+                cookie = cookie.substring(1, cookie.length() - 1).trim();
+            }
             Map<String, String> map = new HashMap<>();
             for (String part : cookie.split(";")) {
                 int eq = part.indexOf('=');

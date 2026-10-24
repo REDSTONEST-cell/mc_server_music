@@ -40,7 +40,9 @@ Minecraft 全服点歌插件，曲库来自 QQ 音乐。玩家搜歌、点歌后
 2. 按 `F12` 打开开发者工具 → 「网络 / Network」，刷新页面，随便点开一个发往 `y.qq.com` 的请求；
 3. 在「请求标头 / Request Headers」中找到 `Cookie`，复制整段值，填入 `qq.cookie`。
 
-Cookie 中至少需要包含 `uin` 与 `qqmusic_key`（或 `qm_keyst`）。Cookie 一般几天到几周会失效，失效后播放时会提示「QQ音乐登录已失效」，重新复制一次并 `/dgmusic reload` 即可。
+Cookie 中至少需要包含 `uin`（微信登录为 `wxuin`）与 `qqmusic_key`（或 `qm_keyst`）。填好后执行 `/dgmusic reload`，聊天栏会显示「已识别账号 ****1234」；如果提示缺少某一项，说明复制的不是登录后的完整 Cookie，请确认网页右上角已显示头像后重新复制。
+
+`config.yml` 中请用双引号包住整段 Cookie，例如 `cookie: "uin=o0123456789; qqmusic_key=Q_H_L_xxx; ..."`。Cookie 一般几天到几周会失效，失效后播放时会提示「QQ音乐登录已失效」，重新复制一次并 `/dgmusic reload` 即可。
 
 > ⚠️ Cookie 等同于你的账号登录凭证，**不要发给任何人，也不要提交到公开仓库**。
 

@@ -2,6 +2,7 @@ package io.github.rvlion.dgmusic.command;
 
 import io.github.rvlion.dgmusic.DgMusicPlugin;
 import io.github.rvlion.dgmusic.player.MusicPlayer;
+import io.github.rvlion.dgmusic.qq.QQMusicClient;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
@@ -47,7 +48,8 @@ public final class MusicCommand implements TabExecutor {
             case "reload" -> {
                 if (!check(sender, "dgmusic.reload")) return true;
                 plugin.reload();
-                plugin.message(sender, Component.text("配置已重新加载", NamedTextColor.GREEN));
+                plugin.message(sender, Component.text("配置已重新加载，QQ 音乐 Cookie: "
+                        + QQMusicClient.describeCookie(plugin.settings().qqCookie()), NamedTextColor.GREEN));
             }
             default -> help(sender);
         }
