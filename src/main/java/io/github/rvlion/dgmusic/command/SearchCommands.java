@@ -83,7 +83,7 @@ public final class SearchCommands implements CommandExecutor {
         plugin.message(player, Component.text("正在搜索「" + query + "」…", NamedTextColor.GRAY));
         Bukkit.getAsyncScheduler().runNow(plugin, t -> {
             try {
-                List<Song> songs = plugin.client().search(query, s.searchResults(), s.qqCookie(), s.timeoutSeconds());
+                List<Song> songs = plugin.client().search(query, s.searchResults(), s.timeoutSeconds());
                 if (songs.isEmpty()) {
                     plugin.message(player, Component.text("没有找到「" + query + "」相关的歌曲", NamedTextColor.YELLOW));
                     return;

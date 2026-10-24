@@ -11,23 +11,41 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.concurrent.ThreadLocalRandom;
+import java.util.UUID;
 
 /**
  * QQ音乐网页/客户端接口（非官方）的最小封装：搜索歌曲、获取播放链接。
  */
 public final class QQMusicClient {
 
-    private static final URI API = URI.create("https://u.y.qq.com/cgi-bin/musicu.fcg");
+    private static final String API = "https://u.y.qq.com/cgi-bin/musicu.fcg";
+    /** 网页端带签名的通道，比 musicu 更不容易被限流 */
+    private static final String SIGNED_API = "https://u.y.qq.com/cgi-bin/musics.fcg";
     private static final String DEFAULT_SIP = "https://isure.stream.qqmusic.qq.com/";
     public static final String USER_AGENT =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+    /** 接口限流/风控时间歇返回的业务码，稍等重试即可 */
+    private static final int CODE_BUSY = 2001;
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long RETRY_DELAY_MS = 300;
+
+    private static final String SEARCH_MODULE = "music.search.SearchCgiService";
+
+    private static final int[] SIGN_PART_1 = {23, 14, 6, 36, 16, 7, 19};
+    private static final int[] SIGN_PART_2 = {16, 1, 32, 12, 19, 27, 8, 5};
+    private static final int[] SIGN_SCRAMBLE = {89, 39, 179, 150, 218, 82, 58, 252, 177, 52, 186, 123, 120, 64, 242, 133,
+            143, 161, 121, 179};
 
     private final HttpClient http;
 
@@ -42,13 +60,47 @@ public final class QQMusicClient {
         return http;
     }
 
-    public List<Song> search(String keyword, int limit, String cookie, int timeoutSeconds) throws QQMusicException {
-        Credential cred = Credential.parse(cookie);
+    // ---- 搜索 ----
 
+    /**
+     * 匿名搜索。依次尝试：签名通道桌面搜索 → 普通通道桌面搜索 → 移动端搜索。
+     */
+    public List<Song> search(String keyword, int limit, int timeoutSeconds) throws QQMusicException {
+        QQMusicException firstError = null;
+        for (int i = 0; i < 3; i++) {
+            try {
+                List<Song> songs = i < 2
+                        ? searchDesktop(keyword, limit, timeoutSeconds, i == 0)
+                        : searchMobile(keyword, limit, timeoutSeconds);
+                if (!songs.isEmpty() || i == 2) return songs;
+            } catch (QQMusicException e) {
+                if (firstError == null) firstError = e;
+            }
+        }
+        throw firstError;
+    }
+
+    private List<Song> searchDesktop(String keyword, int limit, int timeoutSeconds, boolean signed)
+            throws QQMusicException {
+        JsonObject param = new JsonObject();
+        param.addProperty("search_type", 0);
+        param.addProperty("query", keyword);
+        param.addProperty("page_num", 1);
+        param.addProperty("num_per_page", limit);
+
+        // 该模块在网页通道下必须以模块名作为 key，且不能带顶层 comm，否则返回空数据
+        JsonObject body = new JsonObject();
+        body.add(SEARCH_MODULE, request(SEARCH_MODULE, "DoSearchForQQMusicDesktop", param));
+
+        JsonObject data = obj(call(body, SEARCH_MODULE, Credential.ANONYMOUS, timeoutSeconds, signed), "data");
+        return parseSongs(element(obj(obj(data, "body"), "song"), "list"), limit);
+    }
+
+    private List<Song> searchMobile(String keyword, int limit, int timeoutSeconds) throws QQMusicException {
         JsonObject comm = new JsonObject();
         comm.addProperty("ct", "11");
         comm.addProperty("cv", "1003006");
-        comm.addProperty("uin", cred.uin());
+        comm.addProperty("uin", "0");
 
         JsonObject param = new JsonObject();
         param.addProperty("search_type", 0);
@@ -57,24 +109,18 @@ public final class QQMusicClient {
         param.addProperty("num_per_page", limit);
         param.addProperty("grp", 1);
 
-        JsonObject req = new JsonObject();
-        req.addProperty("module", "music.search.SearchCgiService");
-        req.addProperty("method", "DoSearchForQQMusicMobile");
-        req.add("param", param);
-
         JsonObject body = new JsonObject();
         body.add("comm", comm);
-        body.add("req", req);
+        body.add("req", request(SEARCH_MODULE, "DoSearchForQQMusicMobile", param));
 
-        JsonObject resp = post(body, cred, timeoutSeconds);
-        JsonObject result = checkModule(resp, "req");
-        JsonObject data = obj(result, "data");
-        JsonObject songBody = obj(data, "body");
-        JsonArray items = songBody.has("item_song") && songBody.get("item_song").isJsonArray()
-                ? songBody.getAsJsonArray("item_song") : new JsonArray();
+        JsonObject data = obj(call(body, "req", Credential.ANONYMOUS, timeoutSeconds, false), "data");
+        return parseSongs(element(obj(data, "body"), "item_song"), limit);
+    }
 
+    private static List<Song> parseSongs(JsonElement list, int limit) {
         List<Song> songs = new ArrayList<>();
-        for (JsonElement el : items) {
+        if (list == null || !list.isJsonArray()) return songs;
+        for (JsonElement el : list.getAsJsonArray()) {
             if (!el.isJsonObject()) continue;
             JsonObject s = el.getAsJsonObject();
             String mid = str(s, "mid");
@@ -93,19 +139,15 @@ public final class QQMusicClient {
                 }
             }
 
-            JsonObject file = obj(s, "file");
-            String mediaMid = str(file, "media_mid");
-            if (mediaMid.isEmpty()) mediaMid = mid;
-
-            JsonObject pay = obj(s, "pay");
-            boolean vip = num(pay, "pay_play") == 1;
-
-            songs.add(new Song(mid, mediaMid, name, String.join("/", singerNames),
+            boolean vip = num(obj(s, "pay"), "pay_play") == 1;
+            songs.add(new Song(mid, str(obj(s, "file"), "media_mid"), name, String.join("/", singerNames),
                     str(obj(s, "album"), "name"), num(s, "interval"), vip));
             if (songs.size() >= limit) break;
         }
         return songs;
     }
+
+    // ---- 播放链接 ----
 
     /**
      * 按音质优先级获取播放链接。
@@ -119,66 +161,66 @@ public final class QQMusicClient {
             throw new QQMusicException("未配置 QQ 音乐 Cookie，无法获取播放链接，请联系管理员");
         }
 
-        JsonArray songMids = new JsonArray();
-        JsonArray songTypes = new JsonArray();
-        JsonArray fileNames = new JsonArray();
+        List<String> fileNames = new ArrayList<>();
         Map<String, String> extByFile = new HashMap<>();
-        List<String> order = new ArrayList<>();
         for (String q : qualities) {
             String ext = extensionOf(q);
             if (ext == null) continue;
-            String fileName = q + song.mid() + song.mediaMid() + ext;
-            songMids.add(song.mid());
-            songTypes.add(0);
+            String fileName = song.mediaMid().isEmpty()
+                    ? q + song.mid() + song.mid() + ext
+                    : q + song.mediaMid() + ext;
             fileNames.add(fileName);
             extByFile.put(fileName, ext);
-            order.add(fileName);
         }
-        if (order.isEmpty()) {
+        if (fileNames.isEmpty()) {
             throw new QQMusicException("配置的音质 qq.qualities 无效");
         }
 
-        JsonObject comm = new JsonObject();
-        comm.addProperty("uin", cred.uin());
-        comm.addProperty("authst", cred.key());
-        comm.addProperty("tmeLoginType", cred.loginType());
-        comm.addProperty("ct", "24");
-        comm.addProperty("cv", "0");
-        comm.addProperty("format", "json");
+        QQMusicException error = null;
+        for (boolean signed : new boolean[]{true, false}) {
+            for (String[] api : new String[][]{{"music.vkey.GetVkey", "UrlGetVkey"}, {"vkey.GetVkeyServer", "CgiGetVkey"}}) {
+                try {
+                    PlayUrl url = requestVkey(api[0], api[1], song, fileNames, extByFile, cred, timeoutSeconds, signed);
+                    if (url != null) return url;
+                } catch (QQMusicException e) {
+                    if (error == null) error = e;
+                }
+            }
+        }
+        if (error != null) throw error;
+        // 接口在 Cookie 失效时也可能只返回空链接，无法区分具体原因
+        throw new QQMusicException(song.vip()
+                ? "无法获取播放链接：该歌曲需要会员，请确认 Cookie 对应账号有会员且 Cookie 未失效"
+                : "无法获取播放链接：Cookie 可能已失效，或该歌曲因版权原因无法播放");
+    }
+
+    private PlayUrl requestVkey(String module, String method, Song song, List<String> fileNames,
+                                Map<String, String> extByFile, Credential cred, int timeoutSeconds,
+                                boolean signed) throws QQMusicException {
+        JsonArray songMids = new JsonArray();
+        JsonArray songTypes = new JsonArray();
+        JsonArray files = new JsonArray();
+        for (String fileName : fileNames) {
+            songMids.add(song.mid());
+            songTypes.add(0);
+            files.add(fileName);
+        }
 
         JsonObject param = new JsonObject();
-        param.addProperty("guid", String.valueOf(ThreadLocalRandom.current().nextLong(1_000_000_000L, 9_999_999_999L)));
+        param.addProperty("uin", cred.uin());
+        param.addProperty("guid", UUID.randomUUID().toString().replace("-", ""));
         param.add("songmid", songMids);
         param.add("songtype", songTypes);
-        param.add("filename", fileNames);
-        param.addProperty("uin", cred.uin());
+        param.add("filename", files);
         param.addProperty("loginflag", 1);
         param.addProperty("platform", "20");
-
-        JsonObject req = new JsonObject();
-        req.addProperty("module", "vkey.GetVkeyServer");
-        req.addProperty("method", "CgiGetVkey");
-        req.add("param", param);
+        param.addProperty("ctx", 0);
 
         JsonObject body = new JsonObject();
-        body.add("comm", comm);
-        body.add("req_1", req);
+        body.add("comm", webComm(cred));
+        body.add("req_0", request(module, method, param));
 
-        JsonObject resp = post(body, cred, timeoutSeconds);
-        JsonObject result = resp.has("req_1") && resp.get("req_1").isJsonObject()
-                ? resp.getAsJsonObject("req_1") : null;
-        if (result == null) {
-            throw new QQMusicException("QQ音乐接口返回异常");
-        }
-        int code = num(result, "code");
-        if (code == 1000) {
-            throw new QQMusicException("QQ音乐登录已失效（code=1000），请管理员更新 Cookie");
-        }
-        if (code != 0) {
-            throw new QQMusicException("获取播放链接失败（code=" + code + "）");
-        }
-
-        JsonObject data = obj(result, "data");
+        JsonObject data = obj(call(body, "req_0", cred, timeoutSeconds, signed), "data");
         String sip = DEFAULT_SIP;
         if (data.has("sip") && data.get("sip").isJsonArray() && !data.getAsJsonArray("sip").isEmpty()) {
             String first = data.getAsJsonArray("sip").get(0).getAsString();
@@ -195,26 +237,88 @@ public final class QQMusicClient {
                 if (!purl.isEmpty()) purlByFile.put(str(info, "filename"), purl);
             }
         }
-        for (String fileName : order) {
+        for (String fileName : fileNames) {
             String purl = purlByFile.get(fileName);
             if (purl != null) {
                 String url = purl.startsWith("http") ? purl : sip + purl;
                 return new PlayUrl(url, extByFile.get(fileName));
             }
         }
-        throw new QQMusicException(song.vip()
-                ? "无法获取播放链接：该歌曲需要会员，或 Cookie 对应账号没有权限"
-                : "无法获取播放链接：该歌曲可能因版权原因无法播放");
+        return null;
     }
 
-    private JsonObject post(JsonObject body, Credential cred, int timeoutSeconds) throws QQMusicException {
-        HttpRequest.Builder builder = HttpRequest.newBuilder(API)
+    /** 网页端登录态的通用 comm 参数 */
+    private static JsonObject webComm(Credential cred) {
+        long gtk = cred.gtk();
+        JsonObject comm = new JsonObject();
+        comm.addProperty("ct", 24);
+        comm.addProperty("cv", 4747474);
+        comm.addProperty("platform", "yqq.json");
+        comm.addProperty("chid", "0");
+        comm.addProperty("uin", cred.uin());
+        comm.addProperty("authst", cred.key());
+        comm.addProperty("tmeLoginType", cred.loginType());
+        comm.addProperty("g_tk", gtk);
+        comm.addProperty("g_tk_new_20200303", gtk);
+        comm.addProperty("format", "json");
+        comm.addProperty("inCharset", "utf-8");
+        comm.addProperty("outCharset", "utf-8");
+        comm.addProperty("notice", 0);
+        comm.addProperty("need_new_code", 1);
+        return comm;
+    }
+
+    // ---- 请求 ----
+
+    /**
+     * 发送请求并取出指定 key 的模块结果；遇到 2001 时短暂等待后重试。
+     */
+    private JsonObject call(JsonObject body, String key, Credential cred, int timeoutSeconds, boolean signed)
+            throws QQMusicException {
+        int code = 0;
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            JsonObject resp = post(body, cred, timeoutSeconds, signed);
+            code = num(resp, "code");
+            JsonObject module = resp.has(key) && resp.get(key).isJsonObject() ? resp.getAsJsonObject(key) : null;
+            if (code == 0 && module != null) {
+                code = num(module, "code");
+                if (code == 0) return module;
+            }
+            if (code != CODE_BUSY) break;
+            if (attempt < MAX_ATTEMPTS) {
+                try {
+                    Thread.sleep(RETRY_DELAY_MS * attempt);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new QQMusicException("请求被中断", e);
+                }
+            }
+        }
+        throw new QQMusicException(describe(code));
+    }
+
+    private static String describe(int code) {
+        return switch (code) {
+            case CODE_BUSY -> "QQ音乐接口繁忙（code=2001），请稍后再试";
+            case 1000 -> "QQ音乐登录已失效（code=1000），请管理员更新 Cookie";
+            case 104003 -> "Cookie 缺少播放票据（code=104003），请在 y.qq.com 重新登录后复制完整 Cookie";
+            default -> "QQ音乐接口错误（code=" + code + "）";
+        };
+    }
+
+    private JsonObject post(JsonObject body, Credential cred, int timeoutSeconds, boolean signed)
+            throws QQMusicException {
+        String payload = body.toString();
+        URI uri = URI.create(signed
+                ? SIGNED_API + "?_=" + System.currentTimeMillis() + "&sign=" + sign(payload)
+                : API);
+        HttpRequest.Builder builder = HttpRequest.newBuilder(uri)
                 .timeout(Duration.ofSeconds(timeoutSeconds))
                 .header("Content-Type", "application/json")
                 .header("Referer", "https://y.qq.com/")
                 .header("Origin", "https://y.qq.com")
                 .header("User-Agent", USER_AGENT)
-                .POST(HttpRequest.BodyPublishers.ofString(body.toString(), StandardCharsets.UTF_8));
+                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8));
         if (!cred.rawCookie().isEmpty()) {
             builder.header("Cookie", cred.rawCookie());
         }
@@ -238,16 +342,32 @@ public final class QQMusicClient {
         }
     }
 
-    private static JsonObject checkModule(JsonObject resp, String key) throws QQMusicException {
-        if (!resp.has(key) || !resp.get(key).isJsonObject()) {
-            throw new QQMusicException("QQ音乐接口返回异常");
+    /** 网页端请求签名（zzc 算法），对实际发送的请求体计算 */
+    static String sign(String payload) {
+        byte[] digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-1").digest(payload.getBytes(StandardCharsets.UTF_8));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
-        JsonObject module = resp.getAsJsonObject(key);
-        int code = num(module, "code");
-        if (code != 0) {
-            throw new QQMusicException("QQ音乐接口错误（code=" + code + "）");
+        String hash = HexFormat.of().withUpperCase().formatHex(digest);
+        StringBuilder sb = new StringBuilder("zzc");
+        for (int i : SIGN_PART_1) sb.append(hash.charAt(i));
+        byte[] scrambled = new byte[SIGN_SCRAMBLE.length];
+        for (int i = 0; i < scrambled.length; i++) {
+            scrambled[i] = (byte) (SIGN_SCRAMBLE[i] ^ Integer.parseInt(hash.substring(i * 2, i * 2 + 2), 16));
         }
-        return module;
+        sb.append(Base64.getEncoder().encodeToString(scrambled).replaceAll("[\\\\/+=]", ""));
+        for (int i : SIGN_PART_2) sb.append(hash.charAt(i));
+        return sb.toString().toLowerCase(Locale.ROOT);
+    }
+
+    private static JsonObject request(String module, String method, JsonObject param) {
+        JsonObject req = new JsonObject();
+        req.addProperty("module", module);
+        req.addProperty("method", method);
+        req.add("param", param);
+        return req;
     }
 
     private static String extensionOf(String quality) {
@@ -263,6 +383,10 @@ public final class QQMusicClient {
 
     private static JsonObject obj(JsonObject o, String key) {
         return o != null && o.has(key) && o.get(key).isJsonObject() ? o.getAsJsonObject(key) : new JsonObject();
+    }
+
+    private static JsonElement element(JsonObject o, String key) {
+        return o != null && o.has(key) ? o.get(key) : null;
     }
 
     private static String str(JsonObject o, String key) {
@@ -287,8 +411,18 @@ public final class QQMusicClient {
      */
     record Credential(String uin, String key, String loginType, String rawCookie) {
 
+        static final Credential ANONYMOUS = new Credential("0", "", "2", "");
+
         boolean loggedIn() {
             return !uin.equals("0") && !key.isEmpty();
+        }
+
+        long gtk() {
+            long h = 5381;
+            for (int i = 0; i < key.length(); i++) {
+                h = (h << 5) + h + key.charAt(i);
+            }
+            return h & 0x7fffffffL;
         }
 
         static Credential parse(String cookie) {
@@ -303,7 +437,7 @@ public final class QQMusicClient {
             uin = uin.replaceFirst("^o0*", "");
             if (uin.isEmpty() || !uin.chars().allMatch(Character::isDigit)) uin = "0";
             String key = firstNonEmpty(map.get("qqmusic_key"), map.get("qm_keyst"));
-            String loginType = firstNonEmpty(map.get("tmeLoginType"), map.containsKey("wxuin") ? "1" : "2");
+            String loginType = firstNonEmpty(map.get("tmeLoginType"), key.startsWith("W_X") ? "1" : "2");
             return new Credential(uin, key, loginType, cookie.trim());
         }
 

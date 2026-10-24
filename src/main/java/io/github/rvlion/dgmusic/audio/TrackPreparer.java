@@ -155,6 +155,9 @@ public final class TrackPreparer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IOException("下载被中断", e);
+        } catch (IOException e) {
+            String reason = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            throw new QQMusicException("下载歌曲失败：" + reason, e);
         }
     }
 
