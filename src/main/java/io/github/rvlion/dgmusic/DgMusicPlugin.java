@@ -14,6 +14,8 @@ import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.command.TabCompleter;
+import org.bukkit.configuration.InvalidConfigurationException;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -21,6 +23,7 @@ import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -41,6 +44,11 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         saveDefaultConfig();
+        String configError = validateConfig();
+        if (configError != null) {
+            getLogger().severe("config.yml 格式错误，已使用默认配置: " + configError);
+            getLogger().severe("提示：Windows 路径请用正斜杠（C:/ffmpeg/bin/ffmpeg.exe）或改用单引号包住");
+        }
         settings = Settings.load(getConfig(), Bukkit.getIp());
 
         AtomicInteger counter = new AtomicInteger();
@@ -87,7 +95,15 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    public void reload() {
+    /**
+     * 重新加载配置。配置文件格式错误时保留当前配置并返回错误信息，成功返回 null。
+     */
+    public String reload() {
+        String error = validateConfig();
+        if (error != null) {
+            getLogger().warning("config.yml 格式错误，未重新加载: " + error);
+            return error;
+        }
         Settings old = settings;
         reloadConfig();
         settings = Settings.load(getConfig(), Bukkit.getIp());
@@ -96,6 +112,18 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
             startHttpServer();
         }
         checkEnvironment();
+        return null;
+    }
+
+    /** 检查 config.yml 能否被解析，返回错误描述（含行号），正常返回 null。 */
+    private String validateConfig() {
+        try {
+            new YamlConfiguration().load(new File(getDataFolder(), "config.yml"));
+            return null;
+        } catch (IOException | InvalidConfigurationException e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+            return message.replaceAll("\\s+", " ").trim();
+        }
     }
 
     private void startHttpServer() {

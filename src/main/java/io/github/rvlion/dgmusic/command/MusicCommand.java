@@ -47,7 +47,13 @@ public final class MusicCommand implements TabExecutor {
             }
             case "reload" -> {
                 if (!check(sender, "dgmusic.reload")) return true;
-                plugin.reload();
+                String error = plugin.reload();
+                if (error != null) {
+                    plugin.message(sender, Component.text("config.yml 格式有误，已保留原配置：" + error, NamedTextColor.RED));
+                    plugin.message(sender, Component.text(
+                            "提示：Windows 路径请用正斜杠（C:/ffmpeg/bin/ffmpeg.exe），或用单引号包住", NamedTextColor.YELLOW));
+                    return true;
+                }
                 plugin.message(sender, Component.text("配置已重新加载，QQ 音乐 Cookie: "
                         + QQMusicClient.describeCookie(plugin.settings().qqCookie()), NamedTextColor.GREEN));
             }
