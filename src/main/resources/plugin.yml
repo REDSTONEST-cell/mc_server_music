@@ -1,0 +1,50 @@
+name: DgMusic
+version: '${version}'
+main: io.github.rvlion.dgmusic.DgMusicPlugin
+api-version: '1.21'
+folia-supported: true
+description: 全服点歌插件（QQ音乐曲库）
+authors: [RVlion]
+
+commands:
+  dgss:
+    description: 搜索歌曲
+    usage: /dgss <歌曲名>
+    permission: dgmusic.search
+  dgxz:
+    description: 从搜索结果中选择歌曲点播
+    usage: /dgxz <序号>
+    permission: dgmusic.select
+  dgqg:
+    description: 切掉当前歌曲
+    usage: /dgqg
+    permission: dgmusic.skip
+  dgstop:
+    description: 停止所有歌曲播放并清空队列
+    usage: /dgstop
+    permission: dgmusic.stop
+  dgmusic:
+    description: 点歌插件
+    usage: /dgmusic <list|mute|reload>
+    permission: dgmusic.use
+
+permissions:
+  dgmusic.use:
+    default: true
+  dgmusic.search:
+    default: true
+  dgmusic.select:
+    default: true
+  dgmusic.skip:
+    default: true
+  dgmusic.list:
+    default: true
+  dgmusic.mute:
+    default: true
+  dgmusic.stop:
+    default: op
+  dgmusic.reload:
+    default: op
+  dgmusic.bypass:
+    description: 无视点歌冷却与个人排队数量限制
+    default: op

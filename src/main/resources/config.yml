@@ -1,0 +1,65 @@
+# DgMusic 配置文件
+
+# 消息前缀（MiniMessage 格式）
+prefix: "<gold>[点歌]</gold> "
+
+qq:
+  # QQ音乐网页版登录 Cookie（用于获取播放链接，VIP 歌曲需要会员账号）。
+  # 获取方式见 README。至少需要包含 uin 和 qqmusic_key（或 qm_keyst）。
+  # 例: "uin=o0123456789; qqmusic_key=Q_H_L_xxxxx; qm_keyst=Q_H_L_xxxxx"
+  # 注意：Cookie 等同于账号登录凭证，请勿泄露给他人。
+  cookie: ""
+  # 播放音质优先级，从前往后依次尝试。
+  # M500 = MP3 128kbps，C400 = M4A 96kbps，M800 = MP3 320kbps
+  qualities: [M500, C400, M800]
+  # 请求超时（秒）
+  timeout: 15
+
+search:
+  # 每次搜索显示的候选数量
+  results: 10
+  # 搜索冷却（秒），拥有 dgmusic.bypass 的玩家不受限制
+  cooldown: 3
+
+http:
+  # 插件内置 HTTP 服务器，用于向玩家客户端下发音乐资源包
+  bind: "0.0.0.0"
+  port: 8765
+  # 玩家客户端访问上面端口所用的地址，必须填写玩家能访问到的公网 IP 或域名！
+  # 例: "http://123.45.67.89:8765"
+  # 留空则使用 http://<server.properties 中的 server-ip>:<port>，通常是不可用的。
+  public-url: ""
+
+audio:
+  # ffmpeg 可执行文件路径，服务器必须安装 ffmpeg（需支持 libvorbis）
+  ffmpeg: "ffmpeg"
+  # OGG Vorbis 质量 0~10，3 约等于 112kbps，数值越大资源包越大
+  ogg-quality: 3
+  # 允许点播的最长歌曲时长（秒），超出将无法点播
+  max-duration: 600
+  # 单首歌曲下载大小上限（MB）
+  max-download-mb: 50
+  # 最多在本地缓存多少首已转换好的歌曲资源包，超出后删除最旧的
+  max-cached-songs: 30
+
+resource-pack:
+  # 资源包格式，1.21.11 为 75
+  pack-format: 75
+  # 推送资源包时玩家看到的提示
+  prompt: "<yellow>服务器正在推送点歌音乐资源包，接受后即可收听全服点歌。</yellow>"
+
+queue:
+  # 队列中最多等待的歌曲数量
+  max-size: 20
+  # 每个玩家最多同时排队的歌曲数量，拥有 dgmusic.bypass 的玩家不受限制
+  max-per-player: 2
+
+playback:
+  # 声音类别（对应客户端声音设置里的滑块）: MASTER, MUSIC, RECORD, WEATHER, BLOCK, HOSTILE, NEUTRAL, PLAYER, AMBIENT, VOICE
+  # 默认 RECORD 即「唱片机/音符盒」音量滑块
+  sound-source: RECORD
+  volume: 1.0
+  # 歌曲结束后额外等待的秒数，给加载资源包较慢的玩家留出时间
+  end-grace: 8
+  # 玩家中途进服时是否推送当前歌曲（会从头开始播放）
+  play-on-join: true
