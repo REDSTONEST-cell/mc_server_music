@@ -6,6 +6,7 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.ExecutorService;
@@ -35,6 +36,7 @@ public final class PackHttpServer {
         });
         server.setExecutor(executor);
         server.createContext("/packs/", this::handle);
+        server.createContext("/", this::handleIndex);
     }
 
     public void start() {
@@ -44,6 +46,22 @@ public final class PackHttpServer {
     public void stop() {
         server.stop(0);
         executor.shutdownNow();
+    }
+
+    /** 根路径返回一行文字，方便在浏览器里确认端口是否能从外网访问 */
+    private void handleIndex(HttpExchange exchange) throws IOException {
+        try (exchange) {
+            if (!exchange.getRequestURI().getPath().equals("/")) {
+                exchange.sendResponseHeaders(404, -1);
+                return;
+            }
+            byte[] body = "DgMusic OK".getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+            exchange.sendResponseHeaders(200, body.length);
+            try (OutputStream out = exchange.getResponseBody()) {
+                out.write(body);
+            }
+        }
     }
 
     private void handle(HttpExchange exchange) throws IOException {

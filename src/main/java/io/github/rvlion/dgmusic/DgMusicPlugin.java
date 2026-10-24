@@ -131,7 +131,7 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
             httpServer = new PackHttpServer(settings.httpBind(), settings.httpPort(), preparer.packDir());
             httpServer.start();
             getLogger().info("资源包 HTTP 服务已启动: " + settings.httpBind() + ":" + settings.httpPort()
-                    + "，玩家下载地址: " + settings.publicUrl());
+                    + "，玩家下载地址: " + settings.publicUrl() + "（用其他网络的浏览器打开，显示 DgMusic OK 即为可访问）");
         } catch (IOException e) {
             httpServer = null;
             getLogger().log(Level.SEVERE, "无法启动资源包 HTTP 服务（端口 " + settings.httpPort() + " 被占用？），点歌将无法播放", e);
@@ -148,7 +148,8 @@ public final class DgMusicPlugin extends JavaPlugin implements Listener {
                     + " 中填写 QQ 音乐 Cookie 后执行 /dgmusic reload");
         }
         if (getConfig().getString("http.public-url", "").isBlank()) {
-            getLogger().warning("未配置 http.public-url，玩家可能无法下载音乐资源包。当前使用: " + s.publicUrl());
+            getLogger().warning("未配置 http.public-url，玩家将无法下载音乐资源包（当前地址 " + s.publicUrl()
+                    + " 只有服务器本机能访问）。请填写公网 IP 或域名，例如 http://123.45.67.89:8765");
         }
         Bukkit.getAsyncScheduler().runNow(this, t -> {
             try {
